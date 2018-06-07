@@ -74,7 +74,7 @@ while True:
 
 ## 7: slow
 
-可以观察到，远端程序验证 flag 的速度很慢，猜测是时序攻击，每增加一个正确的字符就增加一秒由于没有小写字母和空格，速度可以快一些。在 pwntools 的帮助下可以写出这个程序。
+可以观察到，远端程序验证 flag 的速度很慢，猜测是时序攻击，每增加一个正确的字符就增加一秒。由于没有小写字母和空格，速度可以快一些。在 pwntools 的帮助下可以写出这个程序。
 
 ```python
 from pwn import *
@@ -116,7 +116,43 @@ while True:
             print flag
             quit()
         p.close()
-
 ```
 
 在网络环境不稳定的地方，可能要试好几次。跑这个脚本需要很长的时间。
+
+## 8: pusheen.txt
+
+解压缩的文本中可以发现实心 Pusheen 和空心 Pusheen，猜想它们分别代表二进制的 0 和 1。观察到每个 Pusheen 占 16 行，所以就可以写脚本了。
+
+```python
+s = open("pusheen.txt", "r")
+binary_string = ""
+for offset, i in enumerate(s):
+    if offset % 16 != 1:
+        continue
+    if i == '   ▌▒▒▀▄▄▄▄▄▀▒▒▐▄▀▀▒██▒██▒▀▀▄\n':
+        binary_string += "1"
+    else:
+        binary_string += "0"
+        
+print(hex(int(binary_string, 2)))
+```
+
+把结果拖到一个十六进制编辑器里面，就能看到 flag 了。
+
+## 9: big
+
+在多次解压缩之后得到的 big 文件非常非常大（17.18 GB）。尝试看这个文件前面一小部分，都是 `THISisNOTFLAG{}`。
+
+那么，估计是要使用 `grep` 来寻找正确的 flag 了。
+
+`grep` 支持使用 `-v` 参数反向查找。所以可以：
+
+```
+grep -v "THISisNOTFLAG{}" big
+```
+
+就行了。
+
+**注意：GNU grep 比 BSD grep 快很多。所以使用 BSD 类系统（包括 macOS）自带的 grep 会非常非常慢。**
+
