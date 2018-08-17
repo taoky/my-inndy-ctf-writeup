@@ -179,9 +179,3 @@ bbb\'/**/UNION/**/SELECT/**/1,2,3,4#
 ```
 
 没有地方可以给 `union select` 注入返回数据。那么布尔盲注是怎么做到的呢？
-
-```php+HTML
-<h4><?=sprintf("You %s admin!", $user->isadmin ? "are" : "are not")?></h4>
-```
-
-可以注意到，这里实质返回的是布尔值。
