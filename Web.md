@@ -730,3 +730,182 @@ https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&
 
 got it!
 
+## 29: wordpress 1
+
+这题的源代码还是直接给你的，但是对于部分国家或地区的人来说，拿到这份源代码并不容易。
+
+这是一整个 WordPress 的代码，一个一个文件去看的话……太疯狂了。
+
+已知 WordPress 版本为 4.6.1（可以在 `wp-admin/about.php` 看到），去官网下载了一份，然后两份代码 `diff`。
+
+```shell
+➜  Downloads diff -rq wordpress wordpress-1                                    
+Only in wordpress: .DS_Store
+Files wordpress/readme.html and wordpress-1/readme.html differ
+Only in wordpress-1/wp-admin: js
+Only in wordpress-1: wp-config-sample.php
+Only in wordpress/wp-content: .DS_Store
+Only in wordpress/wp-content: languages
+Only in wordpress-1/wp-content/plugins: akismet
+Only in wordpress/wp-content/plugins: core.php
+Only in wordpress-1/wp-content/plugins: hello.php
+Only in wordpress/wp-content/themes: astrid
+Only in wordpress-1/wp-content/themes: twentyfifteen
+Only in wordpress-1/wp-content/themes: twentyfourteen
+Only in wordpress-1/wp-content/themes: twentysixteen
+Only in wordpress/wp-content: upgrade
+Only in wordpress/wp-content: uploads
+Files wordpress/wp-includes/functions.php and wordpress-1/wp-includes/functions.php differ
+Only in wordpress-1/wp-includes: js
+Files wordpress/wp-includes/version.php and wordpress-1/wp-includes/version.php differ
+```
+
+忽略 `.DS_Store`（这是我 Mac 的问题），按照这份列表排查，工作量就小得多了。
+
+问题版本的 `wp-admin` 和 `wp-includes` 没有 `js` 文件夹，根下没有配置样例，多了繁体中文翻译，插件、主题不同，`wp-content` 多了 `upgrade` 和 `uploads` 两个空文件夹。`wp-includes/version.php` 不同（语言配置），`wp-includes/functions.php` 多了一些奇怪的东西。
+
+```php
+/**
+ * Try to get user's IP
+ *
+ * @since 0.87
+ *
+ * @return string User's IP
+ */
+function wp_get_user_ip() {
+	$ip = $_SERVER['REMOTE_ADDR'];
+	if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
+		$ip = $_SERVER['HTTP_CLIENT_IP'];
+	} elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+		$ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+	}
+	return $ip;
+}
+```
+
+看起来是来统计用户信息的，先不管。发现插件的 `core.php` 有点东西：
+
+```php
+<?php
+/**
+ * @package f14gPrinter
+ * @version 3.1415926
+ */
+/*
+Plugin Name: Super f14g Printer
+Plugin URI: https://game2.security.ntu.st
+Description: This plugin can print f14g1 for you if you know the password!
+Author: Inndy Lin
+Version: 3.1415926
+Author URI: https://inndy.tw
+*/
+
+function print_f14g()
+{
+	$h = 'm'.sprintf('%s%d','d',-4+9e0);
+	if($h($_GET['passw0rd']) === '5ada11fd9c69c78ea65c832dd7f9bbde') {
+		if(wp_get_user_ip() === '127.0.0.1') {
+			eval(mcrypt_decrypt(MCRYPT_RIJNDAEL_256, $h($_GET['passw0rd'].AUTH_KEY), base64_decode('zEFnGVANrtEUTMLVyBusu4pqpHjqhn3X+cCtepGKg89VgIi6KugA+hITeeKIpnQIQM8UZbUkRpuCe/d8Rf5HFQJSawpeHoUg5NtcGam0eeTw+1bnFPT3dcPNB8IekPBDyXTyV44s3yaYMUAXZWthWHEVDFfKSjfTpPmQkB8fp6Go/qytRtiP3LyYmofhOOOV8APh0Pv34VPjCtxcJUpqIw=='), MCRYPT_MODE_CBC, $h($_GET['passw0rd'].AUTH_SALT)));
+		} else {
+			die('</head><body><h1>Sorry, Only admin from localhost can get flag');
+		}
+	}
+}
+
+add_action('wp_head', 'print_f14g');
+
+```
+
+`$h` 值为 `'m'` 和 `'d5'` 拼接而成，然后在第 18 行调用~~不愧是世界上最好的语言！~~。那段 MD5 就是 `cat flag`，尝试：
+
+```
+https://wp.hackme.inndy.tw/?passw0rd=cat%20flag
+```
+
+被第二个条件拦住。
+
+`wp_get_user_ip() === '127.0.0.1'` 中左值就是我们发现 `functions.php` 多出来的函数。
+
+```
+Client-IP: 127.0.0.1
+X-Forwarded-For: 127.0.0.1
+```
+
+因此，在 header 里面加点东西，搜一下返回的 HTML 就能找到 flag 了。
+
+## 30: wordpress 2
+
+上一个 flag 提示主题里面有问题。但是主题的文件也有很多。所以我们找到主题的原始代码。可以发现主题为 astrid 1.11（可以看 `style.css` 开头）。我们 `checkout` 一下。
+
+```shell
+svn checkout https://themes.svn.wordpress.org/astrid/
+```
+
+然后比较。
+
+```shell
+➜  Downloads diff -rq wordpress/wp-content/themes/astrid astrid/1.11
+Only in astrid/1.11: screenshot.png
+Files wordpress/wp-content/themes/astrid/template-parts/content-search.php and astrid/1.11/template-parts/content-search.php differ
+```
+
+那么只可能是这个文件有鬼了。
+
+```php+HTML
+<?php
+/**
+ * Template part for displaying results in search pages.
+ *
+ * @link https://codex.wordpress.org/Template_Hierarchy
+ *
+ * @package Astrid
+ */
+
+?>
+
+<article id="post-<?php the_ID(); ?>" <?php post_class(); ?>>
+	<header class="entry-header">
+		<?php the_title( sprintf( '<h2 class="entry-title"><a href="%s" rel="bookmark">', esc_url( get_permalink() ) ), '</a></h2>' ); ?>
+
+		<?php if ( 'post' === get_post_type() ) : ?>
+		<div class="entry-meta">
+			<?php astrid_posted_on(); ?>
+		</div><!-- .entry-meta -->
+		<?php endif; ?>
+	</header><!-- .entry-header -->
+
+	<div class="entry-summary">
+		<?php the_excerpt(); ?>
+	</div><!-- .entry-summary -->
+	<!-- debug:<?php var_dump($wp_query->post->{'post_'.(string)($_GET['debug']?:'type')}); ?> -->
+
+	<footer class="entry-footer">
+		<?php astrid_entry_footer(); ?>
+	</footer><!-- .entry-footer -->
+</article><!-- #post-## -->
+
+```
+
+第 26 行是多出来的部分。但怎么利用呢？
+
+查看博客文章可以发现，有一篇被加密了：
+
+```
+https://wp.hackme.inndy.tw/archives/78
+```
+
+那现在要么找到密码，要么绕过密码，直接查看内容。
+
+发现当 `debug` 参数为 `content` 时会返回文章内容。尝试在归档里面搜索：
+
+```
+https://wp.hackme.inndy.tw/archives/date/2013/10/?s&debug=content
+```
+
+即可获得 flag。
+
+## 32: command-executor
+
+（31 题似乎坏了？）
+
+这次源代码没那么简单能拿到了。这个站点看上去全是漏洞，但是获得一个能用的不容易。
