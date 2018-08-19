@@ -411,3 +411,109 @@ signed int __cdecl verify(int a1, int a2)
 
 可以看到，flag（`al`）有 42 个字节，`verify()` 分别取 `a1[]` 的前 3、6、9……个字节进行 `crc32`，然后与 `hashes[]` 比较。
 
+尝试写 `z3`，但是怎么写都写不对，最后就尝试枚举吧。
+
+```python
+import string
+from binascii import crc32
+
+hashes = [3594606959, 2158225808, 3381484699, 218476463, 326279469, 1566511483, 1073871869, 2815612267, 2097478526, 776112478, 1640595123, 2225816515, 2680236509, 4099485517, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295, 4294967295]
+alphabet = string.printable
+
+flag = ''
+
+# for i in range(42/3):
+i = 0
+while i != 42/3:
+    for a in alphabet:
+        for b in alphabet:
+            for c in alphabet:
+                flag += a+b+c
+                if crc32(flag) & 0xffffffff == hashes[i]:
+                    i += 1
+                    continue
+                else:
+                    flag = flag[:-3]
+
+print flag
+```
+
+很暴力，但是有效。
+
+## 42: bitx
+
+```c
+int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  int result; // eax
+
+  if ( argc > 1 )
+  {
+    if ( verify(argv[1]) )
+      puts("Good");
+    else
+      puts("Not flag");
+    result = 0;
+  }
+  else
+  {
+    printf("Usage: %s FLAG{This is not flag}\n", *argv);
+    result = 0;
+  }
+  return result;
+}
+```
+
+`verify()`:
+
+```c
+signed int __cdecl verify(int a1)
+{
+  int i; // [esp+Ch] [ebp-4h]
+
+  for ( i = 0; *(_BYTE *)(i + a1) && *(_BYTE *)(i + 134520896); ++i )
+  {
+    if ( *(_BYTE *)(i + a1) + 9 != ((unsigned __int8)((*(_BYTE *)(i + 134520896) & 0xAA) >> 1) | (unsigned __int8)(2 * (*(_BYTE *)(i + 134520896) & 0x55))) )
+      return 0;
+  }
+  return 1;
+}
+```
+
+`134520896` 转换为十六进制为 `0x0804A040`，转到该地址，提取数据：
+
+```c
+unsigned char ida_chars[] =
+{
+  0x8F, 0xAA, 0x85, 0xA0, 0x48, 0xAC, 0x40, 0x95, 0xB6, 0x16, 
+  0xBE, 0x40, 0xB4, 0x16, 0x97, 0xB1, 0xBE, 0xBC, 0x16, 0xB1, 
+  0xBC, 0x16, 0x9D, 0x95, 0xBC, 0x41, 0x16, 0x36, 0x42, 0x95, 
+  0x95, 0x16, 0x40, 0xB1, 0xBE, 0xB2, 0x16, 0x36, 0x42, 0x3D, 
+  0x3D, 0x49, 0x00
+};
+```
+
+Payload:
+
+```python
+ch = [  0x8F, 0xAA, 0x85, 0xA0, 0x48, 0xAC, 0x40, 0x95, 0xB6, 0x16, 
+  0xBE, 0x40, 0xB4, 0x16, 0x97, 0xB1, 0xBE, 0xBC, 0x16, 0xB1, 
+  0xBC, 0x16, 0x9D, 0x95, 0xBC, 0x41, 0x16, 0x36, 0x42, 0x95, 
+  0x95, 0x16, 0x40, 0xB1, 0xBE, 0xB2, 0x16, 0x36, 0x42, 0x3D, 
+  0x3D, 0x49, 0x00]
+
+for i in range(len(ch)):
+    print(chr((((ch[i] & 0xaa) >> 1) | (2 * (ch[i] & 0x55)))-9), end='')
+```
+
+输出 flag 后会报错，但是不用管。
+
+## 43: 2018-rev
+
+初步逆向结果非常诡异，找不到 `main()`。尝试直接运行。
+
+```shell
+2018.rev: 2018.c:67: main: Assertion `argc == 2018 && argv[0][0] == 1 && envp[0][0] == 1' failed.
+已放弃
+```
+
