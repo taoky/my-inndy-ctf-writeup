@@ -517,3 +517,185 @@ for i in range(len(ch)):
 已放弃
 ```
 
+而要满足这个条件，我们只要手动调用 `execve()` 就行。
+
+```c
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdlib.h>
+
+int main(void) {
+	char *argv[2019] = {}; // include the terminating
+	char *envp[2019] = {};
+	for (int i = 0; i < 2018; i++) {
+		argv[i] = malloc(5);
+		envp[i] = malloc(5);
+		strcpy(argv[i], "test");
+		strcpy(envp[i], "test");
+	}
+	argv[0][0] = 1;
+	envp[0][0] = 1; // dirty hack code for 2018.rev
+	execve("./2018.rev", argv, envp);
+	perror("execve: ");
+	return 0;
+}
+```
+
+然后：
+
+```
+Bad timing, you should open this at 2018/1/1 00:00:00 (UTC) :(
+```
+
+之后尝试使用 `libfaketime`，但是发现 `2018.rev` 是静态链接的，无法用这种方法伪造时间。最后还是写了两个脚本运行：
+
+```sh
+#!/bin/bash
+while true
+do
+	date --utc --set="2018-01-01 00:00:00"
+done
+```
+
+```sh
+#!/bin/bash
+while true
+do
+	./2018
+done
+```
+
+作为虚拟机用户，时间的问题无需担心，反正会同步宿主机的时间。
+
+## 44: what-the-hell
+
+```c
+int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  int v4; // [esp+0h] [ebp-18h]
+  unsigned int v5; // [esp+4h] [ebp-14h]
+  int v6; // [esp+8h] [ebp-10h]
+  unsigned int v7; // [esp+Ch] [ebp-Ch]
+
+  v7 = __readgsdword(0x14u);
+  printf("Input the key: ");
+  __isoc99_scanf("%u-%u", &v4, &v5);
+  v6 = calc_key3(v4, v5);
+  if ( v6 )
+    decrypt_flag(v4, v5, v6);
+  else
+    puts("Bad key, try again.");
+  return 0;
+}
+```
+
+看一下 `calc_key3()`:
+
+```c
+int __cdecl calc_key3(int a1, int a2)
+{
+  signed int i; // [esp+Ch] [ebp-Ch]
+
+  if ( a2 * a1 != -574406350 )
+    return 0;
+  if ( (a1 ^ 0x7E) * (a2 + 16) != 1931514558 )
+    return 0;
+  if ( (((_WORD)a1 - (_WORD)a2) & 0xFFF) != 3295 )
+    return 0;
+  if ( !check_prime(a1) )
+    return 0;
+  for ( i = 1; i <= 9999998; ++i )
+  {
+    if ( what(i) == a1 )
+      return a2 * i + 1;
+  }
+  return 0;
+}
+```
+
+逻辑还是比较清楚的，而 `check_prime()` 以及 `what()` 的速度很有可能很慢。`check_prime()` 就是一个 $O(\sqrt n)$ 的算法，而 `what()` 是用递归求斐波那契数列，外面还套了个循环，难怪慢。
+
+我们现在的约束条件有，对于有符号 32 位整数 `a1` 与 `a2`：
+
+- `a1 * a2 == -574406350`
+- `(a1 ^ 0x7E) * (a2 + 16) == 1931514558`
+- `(a1 - a2) & 0xFFF == 3295`
+- `a1` 为素数。
+- `a1` 为斐波那契数列中的元素（需要考虑**溢出**情况）。
+
+将前三个约束条件使用 `z3` 求解。
+
+```python
+from z3 import *
+
+a1 = BitVec('a1', 32)
+a2 = BitVec('a2', 32)
+
+s = Solver()
+
+s.add(a1 * a2 == -574406350)
+s.add((a1 ^ 0x7E) * (a2 + 16) == 1931514558)
+s.add((a1 - a2) & 0xFFF == 3295)
+
+print s.check()
+while s.check() == sat:
+    print s.model()
+    s.add(Or(a1 != s.model()[a1], a2 != s.model()[a2]))
+```
+
+输出：
+
+```
+sat
+[a2 = 1234567890, a1 = 2136772529]
+[a2 = 3382051538, a1 = 1063030705]
+[a2 = 3382051538, a1 = 3210514353]
+[a2 = 1234567890, a1 = 4284256177]
+```
+
+显然，第二组的 `a1` 不是素数，而第三组也不满足素数条件。
+
+```mathematica
+In[1]:= PrimeQ[3210514353]
+
+Out[1]= False
+```
+
+至于最后一个条件，写个程序算一下就行了，记得要动态规划，不要像 `what()` 一样死命递归。
+
+```c
+#include <stdio.h>
+
+#define MAX 9999998
+
+int fib_mem[MAX + 1] = {};
+
+int fib(int i) {
+    if (fib_mem[i] != 0)
+        return fib_mem[i];
+    if (i <= 1) return fib_mem[i] = i;
+    return fib_mem[i] = fib_mem[i - 1] + fib_mem[i - 2];
+}
+
+int main(void) {
+    int a1 = 4284256177;
+    for (int i = 1; i <= MAX; i++) {
+        if (fib(i) == a1) {
+            printf("%d\n", i);
+            return 0;
+        }
+    }
+    return 0;
+}
+```
+
+最终，`[a2 = 1234567890, a1 = 4284256177]`，此时 `i = 887`。
+
+打开 `gdb`，调试，输入：
+
+```
+p (unsigned int) decrypt_flag(4284256177,1234567890,4140025247)
+```
+
+手动执行 `decrypt_flag()` 即可。
