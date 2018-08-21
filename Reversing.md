@@ -699,3 +699,192 @@ p (unsigned int) decrypt_flag(4284256177,1234567890,4140025247)
 ```
 
 手动执行 `decrypt_flag()` 即可。
+
+## 45: unpackme
+
+这是一个加了壳的 Windows 程序，使用 PEiD 查看。
+
+![PEiD](images/reversing-unpackme.png)
+
+可以看到是 UPX 壳。使用工具脱壳失败。
+
+使用 OllyDbg，[ESP 定律](https://ctf-wiki.github.io/ctf-wiki/reverse/unpack/esp/) + [DUMP 及 IAT 重建](https://ctf-wiki.github.io/ctf-wiki/reverse/unpack/fix-iat/)，可以获得能够执行、IDA 分析基本正常的可执行文件。
+
+检验部分：
+
+```c
+int __stdcall sub_40BBB0(HWND hWnd, int a2, int a3, int a4)
+{
+  HWND v4; // eax
+  DWORD v5; // esi
+  BYTE *v7; // ecx
+  int *v8; // edx
+  unsigned int v9; // esi
+  bool v10; // cf
+  CHAR v11; // bl
+  unsigned int v12; // ecx
+  signed int v13; // esi
+  unsigned int v14; // edx
+  char v15; // al
+  char v16; // al
+  HCRYPTHASH phHash; // [esp+Ch] [ebp-E0h]
+  HCRYPTPROV phProv; // [esp+10h] [ebp-DCh]
+  DWORD pdwDataLen; // [esp+14h] [ebp-D8h]
+  BYTE pbData[16]; // [esp+18h] [ebp-D4h]
+  CHAR String; // [esp+28h] [ebp-C4h]
+  CHAR Text; // [esp+68h] [ebp-84h]
+  char v23; // [esp+69h] [ebp-83h]
+  char v24; // [esp+6Ah] [ebp-82h]
+  char v25[125]; // [esp+6Bh] [ebp-81h]
+
+  pdwDataLen = 16;
+  if ( a2 == 514 )
+  {
+    v4 = GetParent(hWnd);
+    v5 = GetDlgItemTextA(v4, 101, &String, 63);
+    if ( v5 )
+    {
+      phProv = 0;
+      phHash = 0;
+      if ( !CryptAcquireContextA(&phProv, 0, 0, 1u, 0xF0000000)
+        || !CryptCreateHash(phProv, 0x8003u, 0, 0, &phHash)
+        || !CryptHashData(phHash, (const BYTE *)&String, v5, 0)
+        || !CryptGetHashParam(phHash, 2u, pbData, &pdwDataLen, 0) )
+      {
+        ExitProcess(1u);
+      }
+      CryptDestroyHash(phHash);
+      CryptReleaseContext(phProv, 0);
+      v7 = pbData;
+      v8 = dword_4128A0;
+      v9 = 12;
+      while ( *(_DWORD *)v7 == *v8 )
+      {
+        v7 += 4;
+        ++v8;
+        v10 = v9 < 4;
+        v9 -= 4;
+        if ( v10 )
+        {
+          v11 = String;
+          v12 = 0;
+          v13 = 3;
+          v14 = 2;
+          do
+          {
+            *(&Text + v12) = v11 ^ byte_410A80[v12] ^ pbData[v12 & 0xF];
+            *(&v23 + v12) = v11 ^ byte_410A81[v12] ^ pbData[((_BYTE)v14 - 1) & 0xF];
+            v15 = byte_410A80[v14] ^ pbData[v14 & 0xF];
+            v14 += 4;
+            *(&v24 + v13 - 3) = v11 ^ v15;
+            v16 = byte_410A80[v13] ^ pbData[v13 & 0xF];
+            v13 += 4;
+            v25[v12] = v11 ^ v16;
+            v12 += 4;
+          }
+          while ( v14 < 0x22 );
+          if ( v12 < 0x80 )
+          {
+            *(&Text + v12) = 0;
+            MessageBoxA(hWnd, &Text, "Flag is", 0x40u);
+            ExitProcess(0);
+          }
+          __report_rangecheckfailure();
+          __debugbreak();
+          JUMPOUT(*(_DWORD *)algn_40BDCF);
+        }
+      }
+      MessageBoxA(hWnd, "Wrong answer", "HACKMECTF", 0x10u);
+    }
+    else
+    {
+      MessageBoxA(hWnd, "Say something!", "HACKMECTF", 0x10u);
+    }
+  }
+  return MEMORY[0](hWnd, a2, a3, a4);
+}
+```
+
+由第 35 行的 `0x8003u` 与 MSDN [关于该参数的介绍](https://docs.microsoft.com/zh-cn/windows/desktop/SecCrypto/alg-id) 可知是 MD5。`dword_4128A0` 中的内容：
+
+```c
+unsigned char ida_chars[] =
+{
+  0x34, 0xAF, 0x0D, 0x07, 0x4B, 0x17, 0xF4, 0x4D, 0x1B, 0xB9, 
+  0x39, 0x76, 0x5B, 0x02, 0x77, 0x6F
+};
+```
+
+还记得 Web 的 writeup 里面有一个和这个一样的 MD5 吗？就是 `how do you turn this on`。这样的话，只要我们输入……等一下，这个按钮怎么点不了？所以我们来看一下 `WinMain()`：
+
+```c
+// write access to const memory has been detected, the output may be wrong!
+int __stdcall WinMain(HINSTANCE hInst, HINSTANCE hPreInst, LPSTR lpszCmdLine, int nCmdShow)
+{
+  HINSTANCE v4; // esi
+  BOOL v5; // eax
+  bool v6; // zf
+  int v7; // ecx
+  const CHAR *v8; // eax
+  HWND v9; // eax
+  HWND v10; // edi
+  HWND v11; // ebx
+  HWND v12; // ebp
+  HGDIOBJ v13; // edi
+  int result; // eax
+  struct tagMSG Msg; // [esp+0h] [ebp-44h]
+  WNDCLASSA WndClass; // [esp+1Ch] [ebp-28h]
+  HINSTANCE hInsta; // [esp+48h] [ebp+4h]
+
+  v4 = hInst;
+  WndClass.style = 0;
+  WndClass.lpfnWndProc = (WNDPROC)sub_40BB10;
+  WndClass.cbClsExtra = 0;
+  WndClass.cbWndExtra = 0;
+  WndClass.hInstance = hInst;
+  *(_OWORD *)&WndClass.hIcon = xmmword_410AA0;
+  WndClass.lpszClassName = "HACKMECTF";
+  if ( !RegisterClassA(&WndClass) )
+    ExitProcess(1u);
+  v5 = IsDebuggerPresent();
+  v7 = 7 * v5;
+  v6 = 7 * v5 == 0;
+  v8 = "[DEBUGGER DETECTED]";
+  hInsta = (HINSTANCE)v7;
+  if ( v6 )
+    v8 = "unpackme";
+  v9 = CreateWindowExA(0, "HACKMECTF", v8, 0x10C90000u, 2147483648, 2147483648, 400, 300, 0, 0, v4, 0);
+  v10 = v9;
+  if ( !v9 )
+    ExitProcess(1u);
+  UpdateWindow(v9);
+  v11 = CreateWindowExA(0x200u, "EDIT", byte_4132B8, 0x58010000u, 8, 10, 270, 20, v10, (HMENU)0x65, v4, 0);
+  if ( !v11 )
+    ExitProcess(1u);
+  v12 = CreateWindowExA(0x200u, "BUTTON", "Check Password", 0x50010000u, 286, 8, 90, 24, v10, (HMENU)0x66, v4, 0);
+  if ( !v12 )
+    ExitProcess(1u);
+  if ( !hInsta )
+    EnableWindow(v11, 1);
+  EnableWindow(v12, 0);
+  dword_4132D4 = GetWindowLongA(v12, -4);
+  SetWindowLongA(v12, -4, (LONG)sub_40BBB0);
+  v13 = GetStockObject(17);
+  SendMessageA(v11, 0x30u, (WPARAM)v13, 0);
+  SendMessageA(v12, 0x30u, (WPARAM)v13, 0);
+  for ( result = GetMessageA(&Msg, 0, 0, 0); result > 0; result = GetMessageA(&Msg, 0, 0, 0) )
+  {
+    TranslateMessage(&Msg);
+    DispatchMessageA(&Msg);
+  }
+  return result;
+}
+```
+
+`v12` 是按钮控件，可以看到在第 49 行，这个按钮被禁用了。在 IDA View 里找到这个位置，进入 Hex View，用 `Edit -> Patch Program` 把 00 改成 01，然后应用即可。
+
+打开程序，可以看到按钮能用了。输入密码即可。
+
+![Final screenshot](images/reversing-unpackme2.png)
+
+（Flag 不公开，请自己走一遍过程。）
