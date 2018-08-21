@@ -888,3 +888,79 @@ int __stdcall WinMain(HINSTANCE hInst, HINSTANCE hPreInst, LPSTR lpszCmdLine, in
 ![Final screenshot](images/reversing-unpackme2.png)
 
 （Flag 不公开，请自己走一遍过程。）
+
+## 46: mov
+
+啥？`mov` [是图灵完备的](https://www.cl.cam.ac.uk/~sd601/papers/mov.pdf)？这程序怎么这么多 `mov`？！
+
+试了 [demovfuscator](https://github.com/kirschju/demovfuscator)，但是效果并不好。最后发现输入 `FLAG{` 就提示 `Good flag`，所以决定爆破。
+
+```python
+import string
+import sys
+from subprocess import Popen, PIPE, STDOUT
+ 
+cmd = sys.argv[1]
+key = 'FLAG{'
+ 
+while True:
+    for i in string.printable:
+        p = Popen(cmd, stdout=PIPE, stdin=PIPE, shell=True)
+        stdout, _ = p.communicate(input=b'%s\n' % (key + i))
+        if "Good" in stdout:
+            key += i
+            print key
+            break
+```
+
+最终获得 flag。
+
+## 47: a-maze
+
+```c
+signed __int64 __fastcall main(signed int a1, char **a2, char **a3)
+{
+  FILE *v3; // rbx
+  __int64 v4; // r12
+
+  if ( a1 > 2 )
+  {
+    v3 = fopen(a2[1], "rb");
+    fseek(v3, 0LL, 2);
+    v4 = ftell(v3);
+    rewind(v3);
+    qword_601088 = (__int64)malloc(v4);
+    if ( fread((void *)qword_601088, v4, 1uLL, v3) != 1 )
+      __assert_fail("fread(map, fsize, 1, fp) == 1", "maze.c", 0x22u, "main");
+    sub_400890(a2[2], 0LL);
+  }
+  __printf_chk(1LL, "Usage: %s input-map hidden-message\n", *a2);
+  return 1LL;
+}
+```
+
+`sub_400890()`:
+
+```c
+void __fastcall __noreturn sub_400890(_BYTE *a1, int a2)
+{
+  __int64 v2; // rax
+
+  v2 = a2;
+  while ( 1 )
+  {
+    LODWORD(v2) = *(_DWORD *)(qword_601088 + (v2 << 9) + 4LL * (*a1 & 0x7F));
+    if ( (_DWORD)v2 == -1 )
+      break;
+    if ( !*a1 )
+    {
+      puts("Too bad, maybe next time!");
+      exit(1);
+    }
+    ++a1;
+  }
+  puts("You got it.");
+  exit(0);
+}
+```
+
