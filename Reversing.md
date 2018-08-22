@@ -915,7 +915,7 @@ while True:
 
 最终获得 flag。
 
-## 47: a-maze
+## 47: a-maze | Unsolved
 
 ```c
 signed __int64 __fastcall main(signed int a1, char **a2, char **a3)
